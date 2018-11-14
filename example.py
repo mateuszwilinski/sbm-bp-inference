@@ -5,8 +5,8 @@
 import numpy as np
 import igraph as ig
 
-from messages import Messages
-from functionsSBM import get_real_overlap, affinity
+from sbm_bp import Messages
+from sbm_bp import get_real_overlap, affinity
 
 # Parameters
 
@@ -44,14 +44,14 @@ t_max = 50
 # Algorithm
 
 conv_1 = crit_1 + 10.0
-while(conv_1 > crit_1):
+while conv_1 > crit_1:
     msg = Messages(q, n, N * np.array(p), G)
     msg.update_marginals()
     msg.update_field()
     
     conv_2 = crit_2 + 10.0
     t = 0
-    while(conv_2 > crit_2 and t < t_max):
+    while conv_2 > crit_2 and t < t_max:
         conv_2 = msg.update_messages()
         t += 1
     temp_n = n_.copy()
@@ -62,4 +62,5 @@ while(conv_1 > crit_1):
 overlap = get_real_overlap(msg.get_marginals(), G, n)  # real overlap
 overlap_ = msg.get_overlap()  # theoretical overlap
 
-print("example;" + str(N) + ";" + str(q) + ";" + str(c) + ";" + str(eps) + ";" + str(eps_) + ";" + str(overlap) + ";" + str(overlap_))
+print("example;" + str(N) + ";" + str(q) + ";" + str(c) + ";" + str(eps) + ";" + str(eps_) + ";"
+      + str(overlap) + ";" + str(overlap_))
