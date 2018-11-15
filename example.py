@@ -5,8 +5,8 @@
 import numpy as np
 import igraph as ig
 
-from sbm_bp import Messages
-from sbm_bp import get_real_overlap, affinity
+from sbm_bp import DirectedMessages
+from sbm_bp import get_real_overlap, directed_affinity
 
 # Parameters
 
@@ -17,11 +17,11 @@ eps = 0.1  # order parameter
 eps_ = 0.1  # starting epsilon
 
 n = np.ones(q) / q
-p = affinity(q, c, n, eps, N)
+p = directed_affinity(q, c, n, eps, eps_, N)
 
 # Graph
 
-G = ig.Graph.SBM(N, p.tolist(), (N * n).tolist())
+G = ig.Graph.SBM(N, p.tolist(), (N * n).tolist(), directed=True)
 groups = np.zeros(N, dtype='int')
 for i in range(q - 1):
     groups[int(N * np.sum(n[:(i + 1)])):] = i + 1
@@ -33,7 +33,7 @@ q_ = q
 c_ = np.mean(G.degree()) / 2.0
 
 n_ = np.ones(q_) / q_
-p_ = affinity(q_, c_, n_, eps_, N)
+p_ = directed_affinity(q_, c_, n_, eps, eps_, N)
 
 # simulation tresholds
 
@@ -45,7 +45,7 @@ t_max = 50
 
 conv_1 = crit_1 + 10.0
 while conv_1 > crit_1:
-    msg = Messages(q, n, N * np.array(p), G)
+    msg = DirectedMessages(q, n, N * np.array(p), G)
     msg.update_marginals()
     msg.update_field()
     
@@ -58,6 +58,7 @@ while conv_1 > crit_1:
     temp_p = p_.copy()
     n_, p_ = msg.get_new_parameters()
     conv_1 = (np.abs(n_ - temp_n).sum() + N * np.abs(p_ - temp_p).sum()) / (temp_n.sum() + temp_p.sum())
+    print(conv_1)
 
 overlap = get_real_overlap(msg.get_marginals(), G, n)  # real overlap
 overlap_ = msg.get_overlap()  # theoretical overlap
