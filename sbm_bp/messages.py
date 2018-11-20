@@ -42,7 +42,7 @@ class Messages(object):
         v['mar'] = v['mar'] / np.sum(v['mar'])  # normalization
 
     def update_marginal_by_message(self, v, msg, old_msg):
-        temp_v = np.log(v)
+        temp_v = np.log(v['mar'])
         temp_v += np.log(np.dot(msg, self.p)) - np.log(np.dot(old_msg, self.p))
         if np.isinf(temp_v.max()):  # if all are equal to -inf
             v['mar'] = np.exp(self.h) * self.n
@@ -79,7 +79,7 @@ class Messages(object):
             # then we need to update the target marginal
             v = self.G.vs[e.target]
             old_mar = v['mar'].copy()
-            self.update_marginal(v)
+            self.update_marginal_by_message(v, e['msg'], old_msg)
             # finally we update the auxiliary field
             self.h += (np.dot(old_mar, self.p) - np.dot(v['mar'], self.p)) / self.N
         conv /= self.M
