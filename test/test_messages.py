@@ -33,4 +33,4 @@ class TestMessages(ut.TestCase):
             conv = msg.update_messages()
             t += 1
 
-        self.assertAlmostEqual(msg.get_overlap(), 0.0, places=1)
+        self.assertAlmostEqual(msg.get_overlap(), 0.9, places=1)
