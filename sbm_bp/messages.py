@@ -235,3 +235,30 @@ class DirectedMessages(Messages):
                 new_p += self.p * np.dot(e['msg'][:, None], e_['msg'][None, :]) / self.Z_e[e.index]
         new_p /= np.dot(new_n[:, None], new_n[None, :]) * self.N * self.N
         return new_n, new_p
+
+
+class PoissonMessages(Messages):
+    def __init__(self, q, n, p, g):
+        self.theta = np.array(g.degree())  # degree correction
+        super(PoissonMessages, self).__init__(q, n, p, g)
+
+    def update_marginal(self, v):
+        pass
+
+    def update_field(self):
+        self.h = 0.0
+
+    def update_messages(self):
+        conv = 0.0  # conversion
+        return conv
+
+    def update_zv(self):
+        pass
+
+    def update_ze(self):
+        pass
+
+    def get_new_parameters(self):
+        new_n = 0.0
+        new_p = 0.0
+        return new_n, new_p
