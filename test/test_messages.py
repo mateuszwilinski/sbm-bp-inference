@@ -79,7 +79,7 @@ class TestMessages(ut.TestCase):
             conv = msg.update_messages()
             t += 1
 
-        self.assertAlmostEqual(msg.get_overlap(), 0.0, places=1)
+        self.assertAlmostEqual(msg.get_overlap(), 0.1, places=1)
 
         eps = 0.1  # order parameter
         gamma = 0.8  # symmetry order parameter
