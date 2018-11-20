@@ -165,7 +165,6 @@ class DirectedMessages(Messages):
 
     def update_marginal_by_message(self, v, msg, old_msg):
         temp_v = np.log(v['mar'])
-        temp_v += np.log(np.dot(msg, self.p)) - np.log(np.dot(old_msg, self.p))
         if msg['direct'] == 3:  # if there was an edge in both direction
             temp_v += (np.log(np.dot(msg['msg'], self.p * self.p.T)) -
                        np.log(np.dot(old_msg, self.p * self.p.T)))
