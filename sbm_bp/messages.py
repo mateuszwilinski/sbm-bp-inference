@@ -41,6 +41,16 @@ class Messages(object):
                 v['mar'] *= np.exp(temp_v)  # eq. 28 [undir]
         v['mar'] = v['mar'] / np.sum(v['mar'])  # normalization
 
+    def update_marginal_by_message(self, v, msg, old_msg):
+        temp_v = np.log(v)
+        temp_v += np.log(np.dot(msg, self.p)) - np.log(np.dot(old_msg, self.p))
+        if np.isinf(temp_v.max()):  # if all are equal to -inf
+            v['mar'] = np.exp(self.h) * self.n
+        else:
+            temp_v -= temp_v.max()
+            v['mar'] = np.exp(temp_v)  # eq. 28 [undir]
+        v['mar'] = v['mar'] / np.sum(v['mar'])  # normalization
+
     def update_marginals(self):
         for v in self.G.vs:
             self.update_marginal(v)
