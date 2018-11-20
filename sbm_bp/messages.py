@@ -213,7 +213,7 @@ class DirectedMessages(Messages):
             # then we need to update the target marginal
             v = self.G.vs[e.target]
             old_mar = v['mar'].copy()
-            self.update_marginal(v)
+            self.update_marginal_by_message(v, e, old_msg)
             # finally we update the auxiliary field
             self.h += (np.dot(old_mar, self.p + self.p.T) - np.dot(v['mar'], self.p + self.p.T)) / self.N
         conv /= conv_denominator
