@@ -41,6 +41,16 @@ class Messages(object):
                 v['mar'] *= np.exp(temp_v)  # eq. 28 [undir]
         v['mar'] = v['mar'] / np.sum(v['mar'])  # normalization
 
+    def update_marginal_by_message(self, v, msg, old_msg):
+        temp_v = np.log(v['mar'])
+        temp_v += np.log(np.dot(msg, self.p)) - np.log(np.dot(old_msg, self.p))
+        if np.isinf(temp_v.max()):  # if all are equal to -inf
+            v['mar'] = np.exp(self.h) * self.n
+        else:
+            temp_v -= temp_v.max()
+            v['mar'] = np.exp(temp_v)  # eq. 28 [undir]
+        v['mar'] = v['mar'] / np.sum(v['mar'])  # normalization
+
     def update_marginals(self):
         for v in self.G.vs:
             self.update_marginal(v)
@@ -69,7 +79,7 @@ class Messages(object):
             # then we need to update the target marginal
             v = self.G.vs[e.target]
             old_mar = v['mar'].copy()
-            self.update_marginal(v)
+            self.update_marginal_by_message(v, e['msg'], old_msg)
             # finally we update the auxiliary field
             self.h += (np.dot(old_mar, self.p) - np.dot(v['mar'], self.p)) / self.N
         conv /= self.M
@@ -153,6 +163,24 @@ class DirectedMessages(Messages):
         v['mar'] = np.exp(temp_v) * self.n  # eq. 28 [undir]
         v['mar'] = v['mar'] / np.sum(v['mar'])  # normalization
 
+    def update_marginal_by_message(self, v, msg, old_msg):
+        temp_v = np.log(v['mar'])
+        if msg['direct'] == 3:  # if there was an edge in both direction
+            temp_v += (np.log(np.dot(msg['msg'], self.p * self.p.T)) -
+                       np.log(np.dot(old_msg, self.p * self.p.T)))
+        elif 1.5 + np.sign(msg.source - msg.target) / 2.0 == msg['direct']:  # if there was same direction edge
+            temp_v += (np.log(np.dot(msg['msg'], self.p)) -
+                       np.log(np.dot(old_msg, self.p)))
+        else:
+            temp_v += (np.log(np.dot(msg['msg'], self.p.T)) -
+                       np.log(np.dot(old_msg, self.p.T)))
+        if np.isinf(temp_v.max()):  # if all are equal to -inf
+            v['mar'] = np.exp(self.h) * self.n
+        else:
+            temp_v -= temp_v.max()
+            v['mar'] = np.exp(temp_v)  # eq. 28 [undir]
+        v['mar'] = v['mar'] / np.sum(v['mar'])  # normalization
+
     def update_field(self):
         self.h = -np.dot(np.array(self.G.vs['mar']), self.p + self.p.T).sum(0) / self.N
 
@@ -184,7 +212,7 @@ class DirectedMessages(Messages):
             # then we need to update the target marginal
             v = self.G.vs[e.target]
             old_mar = v['mar'].copy()
-            self.update_marginal(v)
+            self.update_marginal_by_message(v, e, old_msg)
             # finally we update the auxiliary field
             self.h += (np.dot(old_mar, self.p + self.p.T) - np.dot(v['mar'], self.p + self.p.T)) / self.N
         conv /= conv_denominator
@@ -224,4 +252,31 @@ class DirectedMessages(Messages):
             elif 1.5 + np.sign(e.source - e.target) / 2.0 == e['direct']:  # if there was same direction edge
                 new_p += self.p * np.dot(e['msg'][:, None], e_['msg'][None, :]) / self.Z_e[e.index]
         new_p /= np.dot(new_n[:, None], new_n[None, :]) * self.N * self.N
+        return new_n, new_p
+
+
+class PoissonMessages(Messages):
+    def __init__(self, q, n, p, g):
+        self.theta = np.array(g.degree())  # degree correction
+        super(PoissonMessages, self).__init__(q, n, p, g)
+
+    def update_marginal(self, v):
+        pass
+
+    def update_field(self):
+        self.h = 0.0
+
+    def update_messages(self):
+        conv = 0.0  # conversion
+        return conv
+
+    def update_zv(self):
+        pass
+
+    def update_ze(self):
+        pass
+
+    def get_new_parameters(self):
+        new_n = 0.0
+        new_p = 0.0
         return new_n, new_p
