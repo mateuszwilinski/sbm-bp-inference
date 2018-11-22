@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import numpy as np
+import math
 
 
 class Messages(object):
@@ -29,7 +30,7 @@ class Messages(object):
         self.G.es['msg'] = msgs
 
     def update_marginal(self, v):
-        e_jk = np.array([self.G.es[self.G.get_eid(x.index, v.index)]['msg']  # connected messages
+        e_jk = np.array([self.G.es[self.G.get_eid(x.index, v.index)]['msg']  # incoming messages
                          for x in self.G.vs[v.index].neighbors('in')])
         v['mar'] = self.n.copy()
         if e_jk.size:
@@ -87,7 +88,7 @@ class Messages(object):
 
     def update_zv(self):
         for v in self.G.vs:
-            e_jk = np.array([self.G.es[self.G.get_eid(x.index, v.index)]['msg']  # connected messages
+            e_jk = np.array([self.G.es[self.G.get_eid(x.index, v.index)]['msg']  # incoming messages
                              for x in self.G.vs[v.index].neighbors('in')])
             temp_prod = np.ones(self.q)
             if e_jk.size:
@@ -145,7 +146,7 @@ class DirectedMessages(Messages):
         self.G.to_directed()
 
     def update_marginal(self, v):
-        e_jk = [self.G.es[self.G.get_eid(x.index, v.index)]  # connected messages
+        e_jk = [self.G.es[self.G.get_eid(x.index, v.index)]  # incoming messages
                 for x in self.G.vs[v.index].neighbors('in')]
         temp_v = self.h.copy()
         if e_jk:
@@ -220,7 +221,7 @@ class DirectedMessages(Messages):
 
     def update_zv(self):
         for v in self.G.vs:
-            e_jk = [self.G.es[self.G.get_eid(x.index, v.index)]  # connected messages
+            e_jk = [self.G.es[self.G.get_eid(x.index, v.index)]  # incoming messages
                     for x in self.G.vs[v.index].neighbors('in')]
             temp_prod = np.ones(self.q)
             if e_jk:
@@ -260,18 +261,91 @@ class PoissonMessages(Messages):
         self.theta = np.array(g.degree())  # degree correction
         super(PoissonMessages, self).__init__(q, n, p, g)
 
+    def init_graph(self):
+        self.G.to_directed()
+        if np.logical_not(self.G.is_weighted()):
+            self.G.es['weight'] = np.ones(self.G.ecount())
+
     def update_marginal(self, v):
-        pass
+        e_jk = []  # incoming messages
+        v_j = []  # neighboring nodes
+        for x in self.G.vs[v.index].neighbors('in'):
+            e_jk.append(self.G.es[self.G.get_eid(x.index, v.index)])
+            v_j.append(x['mar'])
+        temp_v = np.log(self.h)
+        if e_jk:
+            for m in e_jk:
+                temp_v += np.log(np.dot(m['msg'], self.p**m['weight'] * np.exp(self.p))) - math.lgamma(m['weight'])
+            temp_v -= np.dot(np.array(v_j), np.exp(-self.p))
+            if np.isinf(temp_v.max()):  # if all are equal to -inf
+                temp_v = np.log(self.h)
+            else:
+                temp_v -= temp_v.max()
+        v['mar'] = np.exp(temp_v) * self.n
+        v['mar'] = v['mar'] / np.sum(v['mar'])  # normalization
+
+    def update_marginal_by_message(self, v, msg, old_msg):
+        temp_v = np.log(v['mar'])
+        temp_v += (np.log(np.dot(msg['msg'], self.p**msg['weight'] * np.exp(self.p))) -
+                   np.log(np.dot(old_msg, self.p**msg['weight'] * np.exp(self.p))))
+        if np.isinf(temp_v.max()):  # if all are equal to -inf
+            v['mar'] = self.h * self.n
+        else:
+            temp_v -= temp_v.max()
+            v['mar'] = np.exp(temp_v)
+        v['mar'] = v['mar'] / np.sum(v['mar'])  # normalization
 
     def update_field(self):
-        self.h = 0.0
+        self.h = np.dot(np.array(self.G.vs['mar']), np.exp(-self.p)).prod(0)
 
     def update_messages(self):
         conv = 0.0  # conversion
+        conv_denominator = np.array(self.G.es['msg']).sum()
+        for e in self.G.es:
+            # we start with updating the message
+            old_msg = e['msg'].copy()
+            e_jk = []  # incoming messages
+            v_j = []  # neighboring nodes
+            for x in self.G.vs[e.source].neighbors('in'):
+                if x != self.G.vs[e.target]:
+                    e_jk.append(self.G.es[self.G.get_eid(x.index, e.source)])
+                    v_j.append(x['mar'])
+            temp_e = np.log(self.h)
+            if e_jk:
+                for m in e_jk:
+                    temp_e += (np.log(np.dot(m['msg'], self.p ** m['weight'] * np.exp(self.p))) -
+                               math.lgamma(m['weight']))
+                temp_e -= np.dot(np.array(v_j), np.exp(-self.p))
+                if np.isinf(temp_e.max()):  # if all are equal to -inf
+                    temp_e = np.log(self.h)
+                else:
+                    temp_e -= temp_e.max()
+            e['msg'] = np.exp(temp_e) * self.n  # eq. 26
+            e['msg'] = e['msg'] / np.sum(e['msg'])  # normalization
+            conv += np.abs(e['msg'] - old_msg).sum()  # updating convergence
+            # then we need to update the target marginal
+            v = self.G.vs[e.target]
+            old_mar = v['mar'].copy()
+            self.update_marginal_by_message(v, e, old_msg)
+            # finally we update the auxiliary field
+            self.h *= np.dot(v['mar'], np.exp(-self.p)) / np.dot(old_mar, np.exp(-self.p))
+        conv /= conv_denominator
         return conv
 
-    def update_zv(self):
-        pass
+    def update_zv(self):  # TODO: Proponuje zmienic na logarytmy, a pozniej zrobic to samo Z_e, a takze w binomial
+        for v in self.G.vs:
+            e_jk = []  # incoming messages
+            v_j = []  # neighboring nodes
+            for x in self.G.vs[v.index].neighbors('in'):
+                e_jk.append(self.G.es[self.G.get_eid(x.index, v.index)])
+                v_j.append(x['mar'])
+            temp_prod = np.ones(self.q)
+            if e_jk:
+                for m in e_jk:
+                    temp_prod *= (np.dot(m['msg'], self.p ** m['weight'] * np.exp(self.p)) /
+                                  math.gamma(m['weight']))
+                temp_prod /= np.dot(np.array(v_j), np.exp(-self.p))
+            self.Z_v[v.index] = np.sum(temp_prod * self.n * self.h)  # eq. 31
 
     def update_ze(self):
         pass
