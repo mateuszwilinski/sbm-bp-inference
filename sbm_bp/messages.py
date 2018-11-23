@@ -275,7 +275,8 @@ class PoissonMessages(Messages):
         temp_v = np.log(self.h)
         if e_jk:
             for m in e_jk:
-                temp_v += np.log(np.dot(m['msg'], self.p**m['weight'] * np.exp(self.p))) - math.lgamma(m['weight'])
+                temp_v += (np.log(np.dot(m['msg'], self.p ** m['weight'] * np.exp(-self.p))) -
+                           math.lgamma(m['weight']))
             temp_v -= np.dot(np.array(v_j), np.exp(-self.p))
             if np.isinf(temp_v.max()):  # if all are equal to -inf
                 temp_v = np.log(self.h)
@@ -286,8 +287,8 @@ class PoissonMessages(Messages):
 
     def update_marginal_by_message(self, v, msg, old_msg):
         temp_v = np.log(v['mar'])
-        temp_v += (np.log(np.dot(msg['msg'], self.p**msg['weight'] * np.exp(self.p))) -
-                   np.log(np.dot(old_msg, self.p**msg['weight'] * np.exp(self.p))))
+        temp_v += (np.log(np.dot(msg['msg'], self.p ** msg['weight'] * np.exp(-self.p))) -
+                   np.log(np.dot(old_msg, self.p ** msg['weight'] * np.exp(-self.p))))
         if np.isinf(temp_v.max()):  # if all are equal to -inf
             v['mar'] = self.h * self.n
         else:
@@ -313,7 +314,7 @@ class PoissonMessages(Messages):
             temp_e = np.log(self.h)
             if e_jk:
                 for m in e_jk:
-                    temp_e += (np.log(np.dot(m['msg'], self.p ** m['weight'] * np.exp(self.p))) -
+                    temp_e += (np.log(np.dot(m['msg'], self.p ** m['weight'] * np.exp(-self.p))) -
                                math.lgamma(m['weight']))
                 temp_e -= np.dot(np.array(v_j), np.exp(-self.p))
                 if np.isinf(temp_e.max()):  # if all are equal to -inf
@@ -332,7 +333,7 @@ class PoissonMessages(Messages):
         conv /= conv_denominator
         return conv
 
-    def update_zv(self):  # TODO: Proponuje zmienic na logarytmy, a pozniej zrobic to samo Z_e, a takze w binomial
+    def update_zv(self):  # TODO: Proponuje zmienic na logarytmy, a pozniej zrobic to samo w Z_e, a takze w binomial
         for v in self.G.vs:
             e_jk = []  # incoming messages
             v_j = []  # neighboring nodes
@@ -342,15 +343,23 @@ class PoissonMessages(Messages):
             temp_prod = np.ones(self.q)
             if e_jk:
                 for m in e_jk:
-                    temp_prod *= (np.dot(m['msg'], self.p ** m['weight'] * np.exp(self.p)) /
+                    temp_prod *= (np.dot(m['msg'], self.p ** m['weight'] * np.exp(-self.p)) /
                                   math.gamma(m['weight']))
                 temp_prod /= np.dot(np.array(v_j), np.exp(-self.p))
             self.Z_v[v.index] = np.sum(temp_prod * self.n * self.h)  # eq. 31
 
     def update_ze(self):
-        pass
+        for e in self.G.es:
+            e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
+            self.Z_e[e.index] = (e['msg'].dot(self.p ** e['weight'] * np.exp(-self.p)).dot(e_['msg']) /
+                                 math.gamma(e['weight']))
 
     def get_new_parameters(self):
-        new_n = 0.0
+        new_n = self.get_marginals().sum(0) / self.N  # eq. 34 [undir]
         new_p = 0.0
+        self.update_ze()  # you may comment this line if you are sure that Z_e is actual
+        for e in self.G.es:
+            e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
+            new_p += self.p ** e['weight'] * np.dot(e['msg'][:, None], e_['msg'][None, :]) / self.Z_e[e.index]
+        new_p *= np.exp(-self.p) / (np.dot(new_n[:, None], new_n[None, :]) * self.N * self.N)
         return new_n, new_p
