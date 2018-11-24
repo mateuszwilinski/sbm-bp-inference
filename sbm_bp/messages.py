@@ -258,8 +258,8 @@ class DirectedMessages(Messages):
 
 class PoissonMessages(Messages):
     def __init__(self, q, n, p, g):
-        self.theta = np.array(g.degree())  # degree correction
         super(PoissonMessages, self).__init__(q, n, p, g)
+        self.p = np.array(p) / self.N
 
     def init_graph(self):
         self.G.to_directed()
@@ -272,14 +272,14 @@ class PoissonMessages(Messages):
         for x in self.G.vs[v.index].neighbors('in'):
             e_jk.append(self.G.es[self.G.get_eid(x.index, v.index)])
             v_j.append(x['mar'])
-        temp_v = np.log(self.h)
+        temp_v = self.h.copy()
         if e_jk:
             for m in e_jk:
                 temp_v += (np.log(np.dot(m['msg'], self.p ** m['weight'] * np.exp(-self.p))) -
                            math.lgamma(m['weight']))
-            temp_v -= np.dot(np.array(v_j), np.exp(-self.p))
+            temp_v -= np.log(np.dot(np.array(v_j), np.exp(-self.p))).sum(0)
             if np.isinf(temp_v.max()):  # if all are equal to -inf
-                temp_v = np.log(self.h)
+                temp_v = self.h.copy()
             else:
                 temp_v -= temp_v.max()
         v['mar'] = np.exp(temp_v) * self.n
@@ -290,14 +290,14 @@ class PoissonMessages(Messages):
         temp_v += (np.log(np.dot(msg['msg'], self.p ** msg['weight'] * np.exp(-self.p))) -
                    np.log(np.dot(old_msg, self.p ** msg['weight'] * np.exp(-self.p))))
         if np.isinf(temp_v.max()):  # if all are equal to -inf
-            v['mar'] = self.h * self.n
+            v['mar'] = np.exp(self.h) * self.n
         else:
             temp_v -= temp_v.max()
             v['mar'] = np.exp(temp_v)
         v['mar'] = v['mar'] / np.sum(v['mar'])  # normalization
 
     def update_field(self):
-        self.h = np.dot(np.array(self.G.vs['mar']), np.exp(-self.p)).prod(0)
+        self.h = np.log(np.dot(np.array(self.G.vs['mar']), np.exp(-self.p))).sum(0)
 
     def update_messages(self):
         conv = 0.0  # conversion
@@ -311,14 +311,14 @@ class PoissonMessages(Messages):
                 if x != self.G.vs[e.target]:
                     e_jk.append(self.G.es[self.G.get_eid(x.index, e.source)])
                     v_j.append(x['mar'])
-            temp_e = np.log(self.h)
+            temp_e = self.h.copy()
             if e_jk:
                 for m in e_jk:
                     temp_e += (np.log(np.dot(m['msg'], self.p ** m['weight'] * np.exp(-self.p))) -
                                math.lgamma(m['weight']))
-                temp_e -= np.dot(np.array(v_j), np.exp(-self.p))
+                temp_e -= np.log(np.dot(np.array(v_j), np.exp(-self.p))).sum(0)
                 if np.isinf(temp_e.max()):  # if all are equal to -inf
-                    temp_e = np.log(self.h)
+                    temp_e = self.h.copy()
                 else:
                     temp_e -= temp_e.max()
             e['msg'] = np.exp(temp_e) * self.n  # eq. 26
@@ -329,7 +329,7 @@ class PoissonMessages(Messages):
             old_mar = v['mar'].copy()
             self.update_marginal_by_message(v, e, old_msg)
             # finally we update the auxiliary field
-            self.h *= np.dot(v['mar'], np.exp(-self.p)) / np.dot(old_mar, np.exp(-self.p))
+            self.h += np.log(np.dot(v['mar'], np.exp(-self.p))) - np.log(np.dot(old_mar, np.exp(-self.p)))
         conv /= conv_denominator
         return conv
 
@@ -346,7 +346,7 @@ class PoissonMessages(Messages):
                     temp_prod *= (np.dot(m['msg'], self.p ** m['weight'] * np.exp(-self.p)) /
                                   math.gamma(m['weight']))
                 temp_prod /= np.dot(np.array(v_j), np.exp(-self.p))
-            self.Z_v[v.index] = np.sum(temp_prod * self.n * self.h)  # eq. 31
+            self.Z_v[v.index] = np.sum(temp_prod * self.n * np.exp(self.h))  # eq. 31
 
     def update_ze(self):
         for e in self.G.es:
