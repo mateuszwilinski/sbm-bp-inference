@@ -45,7 +45,7 @@ t_max = 50
 
 conv_1 = crit_1 + 10.0
 while conv_1 > crit_1:
-    msg = DirectedMessages(q, n, N * np.array(p), G)
+    msg = DirectedMessages(q_, n_, N * np.array(p_), G)
     msg.update_marginals()
     msg.update_field()
     
