@@ -232,7 +232,7 @@ class DirectedMessages(Messages):
                         temp_prod += np.log(np.dot(m['msg'], self.p))
                     else:
                         temp_prod += np.log(np.dot(m['msg'], self.p.T))
-            self.Z_v[v.index] = np.sum(np.exp(temp_prod + np.log(self.n) * self.h))  # eq. 31
+            self.Z_v[v.index] = np.sum(np.exp(temp_prod + np.log(self.n) + self.h))  # eq. 31
 
     def update_ze(self):
         for e in self.G.es:
@@ -346,7 +346,7 @@ class PoissonMessages(Messages):
                     temp_prod += (np.log(np.dot(m['msg'], self.p ** m['weight'] * np.exp(-self.p))) -
                                   math.lgamma(m['weight']))
                 temp_prod += -np.log(np.dot(np.array(v_j), np.exp(-self.p)))
-            self.Z_v[v.index] = np.sum(temp_prod * self.n * np.exp(self.h))  # eq. 31
+            self.Z_v[v.index] = np.sum(np.exp(temp_prod + np.log(self.n) + self.h))  # eq. 31
 
     def update_ze(self):
         for e in self.G.es:
