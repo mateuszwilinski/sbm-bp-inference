@@ -90,10 +90,10 @@ class Messages(object):
         for v in self.G.vs:
             e_jk = np.array([self.G.es[self.G.get_eid(x.index, v.index)]['msg']  # incoming messages
                              for x in self.G.vs[v.index].neighbors('in')])
-            temp_prod = np.ones(self.q)
+            temp_prod = np.zeros(self.q)
             if e_jk.size:
-                temp_prod = np.dot(e_jk, self.p).prod(0)
-            self.Z_v[v.index] = np.sum(temp_prod * self.n * np.exp(self.h))  # eq. 31
+                temp_prod = np.log(np.dot(e_jk, self.p)).sum(0)
+            self.Z_v[v.index] = np.sum(np.exp(temp_prod + np.log(self.n) + self.h))  # eq. 31
 
     def update_ze(self):
         for e in self.G.es:
@@ -223,16 +223,16 @@ class DirectedMessages(Messages):
         for v in self.G.vs:
             e_jk = [self.G.es[self.G.get_eid(x.index, v.index)]  # incoming messages
                     for x in self.G.vs[v.index].neighbors('in')]
-            temp_prod = np.ones(self.q)
+            temp_prod = np.zeros(self.q)
             if e_jk:
                 for m in e_jk:
                     if m['direct'] == 3:  # if there was an edge in both direction
-                        temp_prod *= np.dot(m['msg'], self.p * self.p.T)
+                        temp_prod += np.log(np.dot(m['msg'], self.p * self.p.T))
                     elif 1.5 + np.sign(m.source - m.target) / 2.0 == m['direct']:  # if there was same direction edge
-                        temp_prod *= np.dot(m['msg'], self.p)
+                        temp_prod += np.log(np.dot(m['msg'], self.p))
                     else:
-                        temp_prod *= np.dot(m['msg'], self.p.T)
-            self.Z_v[v.index] = np.sum(temp_prod * self.n * np.exp(self.h))  # eq. 31
+                        temp_prod += np.log(np.dot(m['msg'], self.p.T))
+            self.Z_v[v.index] = np.sum(np.exp(temp_prod + np.log(self.n) * self.h))  # eq. 31
 
     def update_ze(self):
         for e in self.G.es:
@@ -333,19 +333,19 @@ class PoissonMessages(Messages):
         conv /= conv_denominator
         return conv
 
-    def update_zv(self):  # TODO: Proponuje zmienic na logarytmy, a pozniej zrobic to samo w Z_e, a takze w binomial
+    def update_zv(self):
         for v in self.G.vs:
             e_jk = []  # incoming messages
             v_j = []  # neighboring nodes
             for x in self.G.vs[v.index].neighbors('in'):
                 e_jk.append(self.G.es[self.G.get_eid(x.index, v.index)])
                 v_j.append(x['mar'])
-            temp_prod = np.ones(self.q)
+            temp_prod = np.zeros(self.q)
             if e_jk:
                 for m in e_jk:
-                    temp_prod *= (np.dot(m['msg'], self.p ** m['weight'] * np.exp(-self.p)) /
-                                  math.gamma(m['weight']))
-                temp_prod /= np.dot(np.array(v_j), np.exp(-self.p))
+                    temp_prod += (np.log(np.dot(m['msg'], self.p ** m['weight'] * np.exp(-self.p))) -
+                                  math.lgamma(m['weight']))
+                temp_prod += -np.log(np.dot(np.array(v_j), np.exp(-self.p)))
             self.Z_v[v.index] = np.sum(temp_prod * self.n * np.exp(self.h))  # eq. 31
 
     def update_ze(self):
