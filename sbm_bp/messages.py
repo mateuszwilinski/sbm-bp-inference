@@ -346,7 +346,7 @@ class PoissonMessages(Messages):
                     temp_prod += (np.log(np.dot(m['msg'], self.p ** m['weight'] * np.exp(-self.p))) -
                                   math.lgamma(m['weight']))
                 temp_prod += -np.log(np.dot(np.array(v_j), np.exp(-self.p)))
-            self.Z_v[v.index] = np.sum(np.exp(temp_prod + np.log(self.n) + self.h))  # eq. 31
+            self.Z_v[v.index] = np.sum(np.exp(temp_prod + np.log(self.n) + self.h))
 
     def update_ze(self):
         for e in self.G.es:
@@ -363,3 +363,95 @@ class PoissonMessages(Messages):
             new_p += self.p ** e['weight'] * np.dot(e['msg'][:, None], e_['msg'][None, :]) / self.Z_e[e.index]
         new_p *= np.exp(-self.p) / (np.dot(new_n[:, None], new_n[None, :]) * self.N * self.N)
         return new_n, new_p
+
+
+class DegPoissMessages(PoissonMessages):
+    def __init__(self, q, n, p, g):
+        self.theta = np.array(g.degree())  # degree correction
+        super(DegPoissMessages, self).__init__(q, n, p, g)
+        self.h = np.zeros(self.N, q)  # q-component auxiliary field
+
+    def update_marginal(self, v):
+        e_jk = []  # incoming messages
+        v_j = []  # neighboring nodes
+        for x in self.G.vs[v.index].neighbors('in'):
+            e_jk.append(self.G.es[self.G.get_eid(x.index, v.index)])
+            v_j.append(x)
+        temp_v = self.h.sum(0)
+        if e_jk:
+            for m in e_jk:
+                temp_v += np.log(np.dot(m['msg'], self.p ** m['weight'] *
+                                        np.exp(-self.theta[m.source] * self.theta[m.target] * self.p)))
+                temp_v += m['weight'] * (np.log(self.theta[m.source]) + np.log(self.theta[m.target]))
+                temp_v -= math.lgamma(m['weight'])
+            for x in v_j:  # TODO: czy ponizsza linijka jest poprawna?
+                temp_v -= np.log(np.dot(x['mar'], np.exp(-self.theta[x.index] * self.theta[v.index] * self.p)))
+            if np.isinf(temp_v.max()):  # if all are equal to -inf
+                temp_v = self.h.sum(0)
+            else:
+                temp_v -= temp_v.max()
+        v['mar'] = np.exp(temp_v) * self.n
+        v['mar'] = v['mar'] / np.sum(v['mar'])  # normalization
+
+    def update_marginal_by_message(self, v, msg, old_msg):
+        temp_v = np.log(v['mar'])
+        temp_v += (np.log(np.dot(msg['msg'], self.p ** msg['weight'] *
+                                 np.exp(-self.theta[msg.source] * self.theta[msg.target] * self.p))) -
+                   np.log(np.dot(old_msg, self.p ** msg['weight'] *
+                                 np.exp(-self.theta[msg.source] * self.theta[msg.target] * self.p))))
+        if np.isinf(temp_v.max()):  # if all are equal to -inf
+            v['mar'] = np.exp(self.h.sum(0)) * self.n
+        else:
+            temp_v -= temp_v.max()
+            v['mar'] = np.exp(temp_v)
+        v['mar'] = v['mar'] / np.sum(v['mar'])  # normalization
+
+    def update_field(self):
+        for i in range(self.N):
+            v = self.G.vs[i]  # TODO: to jest zle! do poprawy i aktualizacji wywolania!
+            self.h[i] = np.log(np.dot(v['mar'], np.exp(-self.theta[v.source] * self.theta[v.target] * self.p)))
+
+    def update_messages(self):
+        conv = 0.0  # conversion
+        conv_denominator = np.array(self.G.es['msg']).sum()
+        for e in self.G.es:
+            # we start with updating the message
+            old_msg = e['msg'].copy()
+            e_jk = []  # incoming messages
+            v_j = []  # neighboring nodes
+            for x in self.G.vs[e.source].neighbors('in'):
+                if x != self.G.vs[e.target]:
+                    e_jk.append(self.G.es[self.G.get_eid(x.index, e.source)])
+                    v_j.append(x)
+            temp_e = self.h.sum(0)
+            if e_jk:
+                for m in e_jk:
+                    temp_e += np.log(np.dot(m['msg'], self.p ** m['weight'] *
+                                            np.exp(-self.theta[m.source] * self.theta[m.target] * self.p)))
+                    temp_e += m['weight'] * (np.log(self.theta[m.source]) + np.log(self.theta[m.target]))
+                    temp_e -= math.lgamma(m['weight'])
+                for x in v_j:  # TODO: czy ponizsza linijka jest poprawna?
+                    temp_e -= np.log(np.dot(x['mar'], np.exp(-self.theta[x.index] * self.theta[e.source] * self.p)))
+                if np.isinf(temp_e.max()):  # if all are equal to -inf
+                    temp_e = self.h.sum(0)
+                else:
+                    temp_e -= temp_e.max()
+            e['msg'] = np.exp(temp_e) * self.n  # eq. 26
+            e['msg'] = e['msg'] / np.sum(e['msg'])  # normalization
+            conv += np.abs(e['msg'] - old_msg).sum()  # updating convergence
+            # then we need to update the target marginal
+            v = self.G.vs[e.target]
+            self.update_marginal_by_message(v, e, old_msg)
+            # finally we update the auxiliary field
+            self.h[v.index] = np.log(np.dot(v['mar'], np.exp(-self.p)))  # TODO: do przerobienia!
+        conv /= conv_denominator
+        return conv
+
+    def update_zv(self):
+        pass
+
+    def update_ze(self):
+        pass
+
+    def get_new_parameters(self):
+        pass
