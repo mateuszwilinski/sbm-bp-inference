@@ -367,9 +367,11 @@ class PoissonMessages(Messages):
 
 class DegPoissMessages(PoissonMessages):
     def __init__(self, q, n, p, g):
-        self.theta = np.array(g.degree())  # degree correction
         super(DegPoissMessages, self).__init__(q, n, p, g)
-        self.h = np.zeros(self.N, q)  # q-component auxiliary field
+        self.theta = np.zeros((self.N, 2))  # degree correction
+        self.theta[:, 0] = self.G.degree()
+        self.degrees, self.theta[:, 1] = np.unique(self.theta[:, 0], return_inverse=True)
+        self.h = np.zeros(self.degrees.shape[0], q)  # q-component auxiliary field
 
     def update_marginal(self, v):
         e_jk = []  # incoming messages
@@ -377,7 +379,7 @@ class DegPoissMessages(PoissonMessages):
         for x in self.G.vs[v.index].neighbors('in'):
             e_jk.append(self.G.es[self.G.get_eid(x.index, v.index)])
             v_j.append(x)
-        temp_v = self.h.sum(0)
+        temp_v = self.h[self.theta[v.index, 1]]
         if e_jk:
             for m in e_jk:
                 temp_v += np.log(np.dot(m['msg'], self.p ** m['weight'] *
@@ -387,7 +389,7 @@ class DegPoissMessages(PoissonMessages):
             for x in v_j:  # TODO: czy ponizsza linijka jest poprawna?
                 temp_v -= np.log(np.dot(x['mar'], np.exp(-self.theta[x.index] * self.theta[v.index] * self.p)))
             if np.isinf(temp_v.max()):  # if all are equal to -inf
-                temp_v = self.h.sum(0)
+                temp_v = self.h[self.theta[v.index, 1]]
             else:
                 temp_v -= temp_v.max()
         v['mar'] = np.exp(temp_v) * self.n
@@ -400,7 +402,7 @@ class DegPoissMessages(PoissonMessages):
                    np.log(np.dot(old_msg, self.p ** msg['weight'] *
                                  np.exp(-self.theta[msg.source] * self.theta[msg.target] * self.p))))
         if np.isinf(temp_v.max()):  # if all are equal to -inf
-            v['mar'] = np.exp(self.h.sum(0)) * self.n
+            v['mar'] = np.exp(self.h[self.theta[v.index, 1]]) * self.n
         else:
             temp_v -= temp_v.max()
             v['mar'] = np.exp(temp_v)
@@ -408,8 +410,9 @@ class DegPoissMessages(PoissonMessages):
 
     def update_field(self):
         for i in range(self.N):
-            v = self.G.vs[i]  # TODO: to jest zle! do poprawy i aktualizacji wywolania!
-            self.h[i] = np.log(np.dot(v['mar'], np.exp(-self.theta[v.source] * self.theta[v.target] * self.p)))
+            v = self.G.vs[i]  # TODO: powinno byc dobrze, ale jeszcze sie temu przyjrzyj.
+            for j in range(self.degrees.shape[0]):
+                self.h[j] += np.log(np.dot(v['mar'], np.exp(-self.degrees[j] * self.theta[v.index] * self.p)))
 
     def update_messages(self):
         conv = 0.0  # conversion
@@ -423,7 +426,7 @@ class DegPoissMessages(PoissonMessages):
                 if x != self.G.vs[e.target]:
                     e_jk.append(self.G.es[self.G.get_eid(x.index, e.source)])
                     v_j.append(x)
-            temp_e = self.h.sum(0)
+            temp_e = self.h[self.theta[e.source, 1]]
             if e_jk:
                 for m in e_jk:
                     temp_e += np.log(np.dot(m['msg'], self.p ** m['weight'] *
@@ -433,7 +436,7 @@ class DegPoissMessages(PoissonMessages):
                 for x in v_j:  # TODO: czy ponizsza linijka jest poprawna?
                     temp_e -= np.log(np.dot(x['mar'], np.exp(-self.theta[x.index] * self.theta[e.source] * self.p)))
                 if np.isinf(temp_e.max()):  # if all are equal to -inf
-                    temp_e = self.h.sum(0)
+                    temp_e = self.h[self.theta[e.source, 1]]
                 else:
                     temp_e -= temp_e.max()
             e['msg'] = np.exp(temp_e) * self.n  # eq. 26
@@ -443,7 +446,7 @@ class DegPoissMessages(PoissonMessages):
             v = self.G.vs[e.target]
             self.update_marginal_by_message(v, e, old_msg)
             # finally we update the auxiliary field
-            self.h[v.index] = np.log(np.dot(v['mar'], np.exp(-self.p)))  # TODO: do przerobienia!
+            self.h  # TODO: uzupelnic; czy tu trzeba zaktualizowac 'h' dla wszystkich 'degrees'??
         conv /= conv_denominator
         return conv
 
