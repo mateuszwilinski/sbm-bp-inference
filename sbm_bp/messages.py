@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import numpy as np
+import scipy.special as sp
 import math
 
 
@@ -91,7 +92,7 @@ class Messages(object):
             e_jk = np.array([self.G.es[self.G.get_eid(x.index, v.index)]['msg']  # incoming messages
                              for x in self.G.vs[v.index].neighbors('in')])
             temp_prod = np.zeros(self.q)
-            if e_jk.size:
+            if e_jk.size:  # TODO: dodac sprawdzanie czy temp_prod jest ok, na wzor update'u messages i marginals
                 temp_prod = np.log(np.dot(e_jk, self.p)).sum(0)
             self.Z_v[v.index] = np.sum(np.exp(temp_prod + np.log(self.n) + self.h))  # eq. 31
 
@@ -224,7 +225,7 @@ class DirectedMessages(Messages):
             e_jk = [self.G.es[self.G.get_eid(x.index, v.index)]  # incoming messages
                     for x in self.G.vs[v.index].neighbors('in')]
             temp_prod = np.zeros(self.q)
-            if e_jk:
+            if e_jk:  # TODO: dodac sprawdzanie czy temp_prod jest ok, na wzor update'u messages i marginals
                 for m in e_jk:
                     if m['direct'] == 3:  # if there was an edge in both direction
                         temp_prod += np.log(np.dot(m['msg'], self.p * self.p.T))
@@ -341,7 +342,7 @@ class PoissonMessages(Messages):
                 e_jk.append(self.G.es[self.G.get_eid(x.index, v.index)])
                 v_j.append(x['mar'])
             temp_prod = np.zeros(self.q)
-            if e_jk:
+            if e_jk:  # TODO: dodac sprawdzanie czy temp_prod jest ok, na wzor update'u messages i marginals
                 for m in e_jk:
                     temp_prod += (np.log(np.dot(m['msg'], self.p ** m['weight'] * np.exp(-self.p))) -
                                   math.lgamma(m['weight']))
@@ -371,7 +372,7 @@ class DegPoissMessages(PoissonMessages):
         self.theta = np.zeros((self.N, 2))  # degree correction
         self.theta[:, 0] = self.G.degree()
         self.degrees, self.theta[:, 1] = np.unique(self.theta[:, 0], return_inverse=True)
-        self.h = np.zeros(self.degrees.shape[0], q)  # q-component auxiliary field
+        self.h = np.zeros((self.degrees.shape[0], q))  # q-component auxiliary field
 
     def update_marginal(self, v):
         e_jk = []  # incoming messages
@@ -383,11 +384,11 @@ class DegPoissMessages(PoissonMessages):
         if e_jk:
             for m in e_jk:
                 temp_v += np.log(np.dot(m['msg'], self.p ** m['weight'] *
-                                        np.exp(-self.theta[m.source] * self.theta[m.target] * self.p)))
-                temp_v += m['weight'] * (np.log(self.theta[m.source]) + np.log(self.theta[m.target]))
+                                        np.exp(-self.theta[m.source, 0] * self.theta[m.target, 0] * self.p)))
+                temp_v += m['weight'] * (np.log(self.theta[m.source, 0]) + np.log(self.theta[m.target, 0]))
                 temp_v -= math.lgamma(m['weight'])
             for x in v_j:  # TODO: czy ponizsza linijka jest poprawna?
-                temp_v -= np.log(np.dot(x['mar'], np.exp(-self.theta[x.index] * self.theta[v.index] * self.p)))
+                temp_v -= np.log(np.dot(x['mar'], np.exp(-self.theta[x.index, 0] * self.theta[v.index, 0] * self.p)))
             if np.isinf(temp_v.max()):  # if all are equal to -inf
                 temp_v = self.h[self.theta[v.index, 1]]
             else:
@@ -398,9 +399,9 @@ class DegPoissMessages(PoissonMessages):
     def update_marginal_by_message(self, v, msg, old_msg):
         temp_v = np.log(v['mar'])
         temp_v += (np.log(np.dot(msg['msg'], self.p ** msg['weight'] *
-                                 np.exp(-self.theta[msg.source] * self.theta[msg.target] * self.p))) -
+                                 np.exp(-self.theta[msg.source, 0] * self.theta[msg.target, 0] * self.p))) -
                    np.log(np.dot(old_msg, self.p ** msg['weight'] *
-                                 np.exp(-self.theta[msg.source] * self.theta[msg.target] * self.p))))
+                                 np.exp(-self.theta[msg.source, 0] * self.theta[msg.target, 0] * self.p))))
         if np.isinf(temp_v.max()):  # if all are equal to -inf
             v['mar'] = np.exp(self.h[self.theta[v.index, 1]]) * self.n
         else:
@@ -409,10 +410,19 @@ class DegPoissMessages(PoissonMessages):
         v['mar'] = v['mar'] / np.sum(v['mar'])  # normalization
 
     def update_field(self):
-        for i in range(self.N):
-            v = self.G.vs[i]  # TODO: powinno byc dobrze, ale jeszcze sie temu przyjrzyj.
+        for v in self.G.vs:
             for j in range(self.degrees.shape[0]):
-                self.h[j] += np.log(np.dot(v['mar'], np.exp(-self.degrees[j] * self.theta[v.index] * self.p)))
+                self.h[j] += np.log(np.dot(v['mar'], np.exp(-self.degrees[j] * self.theta[v.index, 0] * self.p)))
+
+    def update_field_(self):
+        for v in self.G.vs:
+            self.h += np.log(np.einsum('...i,...ij', v['mar'],
+                                       np.exp(-np.multiply.outer(self.degrees, self.theta[v.index, 0] * self.p))))
+
+    def update_field_by_marginal(self, v, old_mar):
+        for j in range(self.degrees.shape[0]):
+            self.h[j] -= np.log(np.dot(old_mar, np.exp(-self.degrees[j] * self.theta[v.index, 0] * self.p)))
+            self.h[j] += np.log(np.dot(v['mar'], np.exp(-self.degrees[j] * self.theta[v.index, 0] * self.p)))
 
     def update_messages(self):
         conv = 0.0  # conversion
@@ -430,11 +440,12 @@ class DegPoissMessages(PoissonMessages):
             if e_jk:
                 for m in e_jk:
                     temp_e += np.log(np.dot(m['msg'], self.p ** m['weight'] *
-                                            np.exp(-self.theta[m.source] * self.theta[m.target] * self.p)))
-                    temp_e += m['weight'] * (np.log(self.theta[m.source]) + np.log(self.theta[m.target]))
+                                            np.exp(-self.theta[m.source, 0] * self.theta[m.target, 0] * self.p)))
+                    temp_e += m['weight'] * (np.log(self.theta[m.source, 0]) + np.log(self.theta[m.target, 0]))
                     temp_e -= math.lgamma(m['weight'])
                 for x in v_j:  # TODO: czy ponizsza linijka jest poprawna?
-                    temp_e -= np.log(np.dot(x['mar'], np.exp(-self.theta[x.index] * self.theta[e.source] * self.p)))
+                    temp_e -= np.log(np.dot(x['mar'], np.exp(-self.theta[x.index, 0] *
+                                                             self.theta[e.source, 0] * self.p)))
                 if np.isinf(temp_e.max()):  # if all are equal to -inf
                     temp_e = self.h[self.theta[e.source, 1]]
                 else:
@@ -444,14 +455,15 @@ class DegPoissMessages(PoissonMessages):
             conv += np.abs(e['msg'] - old_msg).sum()  # updating convergence
             # then we need to update the target marginal
             v = self.G.vs[e.target]
+            old_mar = v['mar'].copy()
             self.update_marginal_by_message(v, e, old_msg)
             # finally we update the auxiliary field
-            self.h  # TODO: uzupelnic; czy tu trzeba zaktualizowac 'h' dla wszystkich 'degrees'??
+            self.update_field_by_marginal(v, old_mar)
         conv /= conv_denominator
         return conv
 
     def update_zv(self):
-        pass
+        pass  # TODO: dodac sprawdzanie czy temp_prod jest ok, na wzor update'u messages i marginals
 
     def update_ze(self):
         pass
