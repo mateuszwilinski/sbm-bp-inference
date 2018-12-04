@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import numpy as np
-import scipy.special as sp
 import math
 
 
@@ -369,7 +368,7 @@ class PoissonMessages(Messages):
 class DegPoissMessages(PoissonMessages):
     def __init__(self, q, n, p, g):
         super(DegPoissMessages, self).__init__(q, n, p, g)
-        self.theta = np.zeros((self.N, 2))  # degree correction
+        self.theta = np.zeros((self.N, 2), dtype='int')  # degree correction
         self.theta[:, 0] = self.G.degree()
         self.degrees, self.theta[:, 1] = np.unique(self.theta[:, 0], return_inverse=True)
         self.h = np.zeros((self.degrees.shape[0], q))  # q-component auxiliary field
@@ -380,7 +379,7 @@ class DegPoissMessages(PoissonMessages):
         for x in self.G.vs[v.index].neighbors('in'):
             e_jk.append(self.G.es[self.G.get_eid(x.index, v.index)])
             v_j.append(x)
-        temp_v = self.h[self.theta[v.index, 1]]
+        temp_v = self.h[self.theta[v.index, 1]].copy()
         if e_jk:
             for m in e_jk:
                 temp_v += np.log(np.dot(m['msg'], self.p ** m['weight'] *
@@ -390,7 +389,7 @@ class DegPoissMessages(PoissonMessages):
             for x in v_j:  # TODO: czy ponizsza linijka jest poprawna?
                 temp_v -= np.log(np.dot(x['mar'], np.exp(-self.theta[x.index, 0] * self.theta[v.index, 0] * self.p)))
             if np.isinf(temp_v.max()):  # if all are equal to -inf
-                temp_v = self.h[self.theta[v.index, 1]]
+                temp_v = self.h[self.theta[v.index, 1]].copy()
             else:
                 temp_v -= temp_v.max()
         v['mar'] = np.exp(temp_v) * self.n
@@ -411,18 +410,14 @@ class DegPoissMessages(PoissonMessages):
 
     def update_field(self):
         for v in self.G.vs:
-            for j in range(self.degrees.shape[0]):
-                self.h[j] += np.log(np.dot(v['mar'], np.exp(-self.degrees[j] * self.theta[v.index, 0] * self.p)))
-
-    def update_field_(self):
-        for v in self.G.vs:
             self.h += np.log(np.einsum('...i,...ij', v['mar'],
                                        np.exp(-np.multiply.outer(self.degrees, self.theta[v.index, 0] * self.p))))
 
     def update_field_by_marginal(self, v, old_mar):
-        for j in range(self.degrees.shape[0]):
-            self.h[j] -= np.log(np.dot(old_mar, np.exp(-self.degrees[j] * self.theta[v.index, 0] * self.p)))
-            self.h[j] += np.log(np.dot(v['mar'], np.exp(-self.degrees[j] * self.theta[v.index, 0] * self.p)))
+        self.h -= np.log(np.einsum('...i,...ij', old_mar,
+                                   np.exp(-np.multiply.outer(self.degrees, self.theta[v.index, 0] * self.p))))
+        self.h += np.log(np.einsum('...i,...ij', v['mar'],
+                                   np.exp(-np.multiply.outer(self.degrees, self.theta[v.index, 0] * self.p))))
 
     def update_messages(self):
         conv = 0.0  # conversion
@@ -436,7 +431,7 @@ class DegPoissMessages(PoissonMessages):
                 if x != self.G.vs[e.target]:
                     e_jk.append(self.G.es[self.G.get_eid(x.index, e.source)])
                     v_j.append(x)
-            temp_e = self.h[self.theta[e.source, 1]]
+            temp_e = self.h[self.theta[e.source, 1]].copy()
             if e_jk:
                 for m in e_jk:
                     temp_e += np.log(np.dot(m['msg'], self.p ** m['weight'] *
@@ -447,7 +442,7 @@ class DegPoissMessages(PoissonMessages):
                     temp_e -= np.log(np.dot(x['mar'], np.exp(-self.theta[x.index, 0] *
                                                              self.theta[e.source, 0] * self.p)))
                 if np.isinf(temp_e.max()):  # if all are equal to -inf
-                    temp_e = self.h[self.theta[e.source, 1]]
+                    temp_e = self.h[self.theta[e.source, 1]].copy()
                 else:
                     temp_e -= temp_e.max()
             e['msg'] = np.exp(temp_e) * self.n  # eq. 26
@@ -463,10 +458,41 @@ class DegPoissMessages(PoissonMessages):
         return conv
 
     def update_zv(self):
-        pass  # TODO: dodac sprawdzanie czy temp_prod jest ok, na wzor update'u messages i marginals
+        for v in self.G.vs:
+            e_jk = []  # incoming messages
+            v_j = []  # neighboring nodes
+            for x in self.G.vs[v.index].neighbors('in'):
+                e_jk.append(self.G.es[self.G.get_eid(x.index, v.index)])
+                v_j.append(x['mar'])
+            temp_prod = np.zeros(self.q)
+            if e_jk:  # TODO: dodac sprawdzanie czy temp_prod jest ok, na wzor update'u messages i marginals
+                for m in e_jk:
+                    temp_prod += np.log(np.dot(m['msg'], self.p ** m['weight'] *
+                                               np.exp(-self.theta[m.source, 0] * self.theta[m.target, 0] * self.p)))
+                    temp_prod += m['weight'] * (np.log(self.theta[m.source, 0]) + np.log(self.theta[m.target, 0]))
+                    temp_prod -= math.lgamma(m['weight'])
+                for x in v_j:  # TODO: czy ponizsza linijka jest poprawna?
+                    temp_prod -= np.log(np.dot(x['mar'], np.exp(-self.theta[x.index, 0] *
+                                                                self.theta[v.index, 0] * self.p)))
+            self.Z_v[v.index] = np.sum(np.exp(temp_prod + np.log(self.n) + self.h[self.theta[v.index, 1]]))
 
     def update_ze(self):
-        pass
+        for e in self.G.es:
+            e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
+            self.Z_e[e.index] = e['msg'].dot(self.p ** e['weight'] *
+                                             np.exp(-self.theta[e.source, 0] * self.theta[e.target, 0] *
+                                                    self.p)).dot(e_['msg'])
+            self.Z_e[e.index] *= ((self.theta[e.source, 0] * self.theta[e.target, 0]) ** e['weight'] /
+                                  math.gamma(e['weight']))
 
     def get_new_parameters(self):
-        pass
+        new_n = self.get_marginals().sum(0) / self.N  # eq. 34 [undir]
+        new_p = 0.0
+        self.update_ze()  # you may comment this line if you are sure that Z_e is actual
+        for e in self.G.es:
+            e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
+            new_p += ((self.theta[e.source, 0] * self.theta[e.target, 0] * self.p) ** e['weight'] *
+                      np.exp(-self.theta[e.source, 0] * self.theta[e.target, 0] * self.p) *
+                      np.dot(e['msg'][:, None], e_['msg'][None, :]) / self.Z_e[e.index])
+        new_p /= (np.dot(new_n[:, None], new_n[None, :]) * self.N * self.N)
+        return new_n, new_p
