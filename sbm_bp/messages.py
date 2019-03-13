@@ -228,6 +228,217 @@ class DirectedMessages(Messages):
         return new_n, new_p
 
 
+class DegMessages(Messages):
+    def __init__(self, q, n, p, g):
+        super(DegMessages, self).__init__(q, n, p, g)
+        self.theta = np.array(g.degree())  # degree correction
+
+    def update_marginal(self, v):
+        e_jk = np.array([self.G.es[self.G.get_eid(x.index, v.index)]['msg'] *
+                         self.theta[x.index] * self.theta[v.index]
+                         for x in self.G.vs[v.index].neighbors('in')])  # connected messages
+        v['mar'] = self.n.copy()
+        if e_jk.size:
+            temp_v = np.log(np.dot(e_jk, self.p)).sum(0) + self.h * self.theta[v.index]
+            if np.isinf(temp_v.max()):  # if all are equal to -inf
+                v['mar'] *= np.exp(self.h * self.theta[v.index])
+            else:
+                temp_v -= temp_v.max()
+                v['mar'] *= np.exp(temp_v)  # eq. 28 [undir]
+        v['mar'] = v['mar'] / np.sum(v['mar'])  # normalization
+
+    def update_field(self):
+        self.h = -np.dot(np.array(self.G.vs['mar']), self.p).T.dot(self.theta) / self.N
+
+    def update_messages(self):
+        conv = 0.0  # conversion
+        for e in self.G.es:
+            # we start with updating the message
+            old_msg = e['msg'].copy()
+            e_jk = np.array([self.G.es[self.G.get_eid(x.index, e.source)]['msg'] *
+                             self.theta[x.index] * self.theta[e.source]
+                             for x in self.G.vs[e.source].neighbors('in')
+                             if x != self.G.vs[e.target]])
+            e['msg'] = self.n.copy()
+            if e_jk.size:
+                temp_e = np.log(np.dot(e_jk, self.p)).sum(0) + self.h * self.theta[e.source]
+                if np.isinf(temp_e.max()):  # if all are equal to -inf
+                    e['msg'] *= np.exp(self.h * self.theta[e.source])
+                else:
+                    temp_e -= temp_e.max()
+                    e['msg'] *= np.exp(temp_e)  # eq. 26
+            e['msg'] = e['msg'] / np.sum(e['msg'])  # normalization
+            conv += np.abs(e['msg'] - old_msg).sum()  # updating convergence
+            # then we need to update the target marginal
+            v = self.G.vs[e.target]
+            old_mar = v['mar'].copy()
+            self.update_marginal(v)
+            # finally we update the auxiliary field
+            self.h += (np.dot(old_mar, self.p) - np.dot(v['mar'], self.p)) * self.theta[v.index] / self.N
+        conv /= self.M
+        return conv
+
+    def update_zv(self):
+        for v in self.G.vs:
+            e_jk = np.array([self.G.es[self.G.get_eid(x.index, v.index)]['msg'] *
+                             self.theta[x.index] * self.theta[v.index]
+                             for x in self.G.vs[v.index].neighbors('in')])  # connected messages
+            temp_prod = np.ones(self.q)
+            if e_jk.size:
+                temp_prod = np.dot(e_jk, self.p).prod(0)
+            self.Z_v[v.index] = np.sum(temp_prod * self.n * np.exp(self.h * self.theta[v.index]))
+
+    def update_ze(self):
+        for e in self.G.es:
+            e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
+            self.Z_e[e.index] = e['msg'].dot(self.p).dot(e_['msg']) * self.theta[e.source] * self.theta[e.target]
+
+    def get_new_parameters(self):
+        new_n = self.get_marginals().sum(0) / self.N  # eq. 34 [undir]
+        new_n_deg = self.theta.dot(self.get_marginals()) / self.N
+        new_p = 0.0
+        self.update_ze()  # you may comment this line if you are sure that Z_e is actual
+        for e in self.G.es:
+            e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
+            new_p += (np.dot(e['msg'][:, None], e_['msg'][None, :]) *
+                      self.theta[e.source] * self.theta[e.target]) / self.Z_e[e.index]
+        new_p *= self.p / (np.dot(new_n_deg[:, None], new_n_deg[None, :]) * self.N * self.N)
+        return new_n, new_p
+
+    # def get_new_parameters(self):
+    #     new_n = self.get_marginals().sum(0) / self.N  # eq. 34 [undir]
+    #     new_p = 0.0
+    #     self.update_ze()  # you may comment this line if you are sure that Z_e is actual
+    #     for e in self.G.es:
+    #         e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
+    #         new_p += (np.dot(e['msg'][:, None], e_['msg'][None, :]) *
+    #                   self.theta[e.source] * self.theta[e.target]) / self.Z_e[e.index]
+    #     new_p *= self.p / (np.dot(new_n[:, None], new_n[None, :]) * self.N * self.N)
+    #     return new_n, new_p
+
+
+class DegDirectedMessages(DirectedMessages):
+    def __init__(self, q, n, p, g):
+        self.theta = np.array([g.outdegree(), g.indegree()])  # degree correction
+        self.h_ = np.zeros(q)
+        super(DegDirectedMessages, self).__init__(q, n, p, g)
+
+    def update_marginal(self, v):
+        e_jk = [self.G.es[self.G.get_eid(x.index, v.index)]  # connected messages
+                for x in self.G.vs[v.index].neighbors('in')]
+        temp_v = self.h * self.theta[1, v.index] + self.h_ * self.theta[0, v.index]
+        if e_jk:
+            for m in e_jk:
+                if m['direct'] == 3:  # if there was an edge in both direction
+                    temp_v += np.log(np.dot(m['msg'], self.p * self.p.T))
+                    temp_v += np.log(self.theta[0, m.source] * self.theta[1, m.target] *
+                                     self.theta[0, m.target] * self.theta[1, m.source])
+                elif 1.5 + np.sign(m.source - m.target) / 2.0 == m['direct']:  # if there was same direction edge
+                    temp_v += np.log(np.dot(m['msg'], self.p))
+                    temp_v += np.log(self.theta[0, m.source] * self.theta[1, m.target])
+                else:
+                    temp_v += np.log(np.dot(m['msg'], self.p.T))
+                    temp_v += np.log(self.theta[0, m.target] * self.theta[1, m.source])
+        if np.isinf(temp_v.max()):  # if all are equal to -inf
+            temp_v = np.zeros(self.q)
+        else:
+            temp_v -= temp_v.max()
+        v['mar'] = np.exp(temp_v) * self.n
+        v['mar'] = v['mar'] / np.sum(v['mar'])  # normalization
+
+    def update_field(self):
+        self.h = -np.dot(np.array(self.G.vs['mar']), self.p).T.dot(self.theta[0, :]) / self.N
+        self.h_ = -np.dot(np.array(self.G.vs['mar']), self.p.T).T.dot(self.theta[1, :]) / self.N
+
+    def update_messages(self):
+        conv = 0.0  # conversion
+        conv_denominator = np.array(self.G.es['msg']).sum()
+        for e in self.G.es:
+            # we start with updating the message
+            old_msg = e['msg'].copy()
+            e_jk = [self.G.es[self.G.get_eid(x.index, e.source)]
+                    for x in self.G.vs[e.source].neighbors('in')
+                    if x != self.G.vs[e.target]]
+            temp_e = (self.h * self.theta[1, e.source] + self.h_ * self.theta[0, e.source])
+            if e_jk:
+                for m in e_jk:
+                    if m['direct'] == 3:  # if there was an edge in both direction
+                        temp_e += np.log(np.dot(m['msg'], self.p * self.p.T))
+                        temp_e += np.log(self.theta[0, m.source] * self.theta[1, m.target] *
+                                         self.theta[0, m.target] * self.theta[1, m.source])
+                    elif 1.5 + np.sign(m.source - m.target) / 2.0 == m['direct']:  # if there was same direction edge
+                        temp_e += np.log(np.dot(m['msg'], self.p))
+                        temp_e += np.log(self.theta[0, m.source] * self.theta[1, m.target])
+                    else:
+                        temp_e += np.log(np.dot(m['msg'], self.p.T))
+                        temp_e += np.log(self.theta[0, m.target] * self.theta[1, m.source])
+            if np.isinf(temp_e.max()):  # if all are equal to -inf
+                temp_e = np.zeros(self.q)  # zeros because it is a logarithm
+            else:
+                temp_e -= temp_e.max()
+            e['msg'] = np.exp(temp_e) * self.n
+            e['msg'] = e['msg'] / np.sum(e['msg'])  # normalization
+            conv += np.abs(e['msg'] - old_msg).sum()  # updating convergence
+            # then we need to update the target marginal
+            v = self.G.vs[e.target]
+            old_mar = v['mar'].copy()
+            self.update_marginal(v)
+            # finally we update the auxiliary field
+            self.h += (np.dot(old_mar, self.p) - np.dot(v['mar'], self.p)) * self.theta[0, v.index] / self.N
+            self.h_ += (np.dot(old_mar, self.p.T) - np.dot(v['mar'], self.p.T)) * self.theta[1, v.index] / self.N
+        conv /= conv_denominator
+        return conv
+
+    def update_zv(self):  # TODO: tu trzeba dodac jakies logarytmy, poniewaz to sie wykrzaczy dla duzych stopni
+        for v in self.G.vs:
+            e_jk = [self.G.es[self.G.get_eid(x.index, v.index)]  # connected messages
+                    for x in self.G.vs[v.index].neighbors('in')]
+            temp_prod = np.ones(self.q)
+            if e_jk:
+                for m in e_jk:
+                    if m['direct'] == 3:  # if there was an edge in both direction
+                        temp_prod *= np.dot(m['msg'], self.p * self.p.T)
+                        temp_prod *= (self.theta[0, m.source] * self.theta[1, m.target] *
+                                      self.theta[0, m.target] * self.theta[1, m.source])
+                    elif 1.5 + np.sign(m.source - m.target) / 2.0 == m['direct']:  # if there was same direction edge
+                        temp_prod *= np.dot(m['msg'], self.p)
+                        temp_prod *= self.theta[0, m.source] * self.theta[1, m.target]
+                    else:
+                        temp_prod *= np.dot(m['msg'], self.p.T)
+                        temp_prod *= self.theta[0, m.target] * self.theta[1, m.source]
+            self.Z_v[v.index] = np.sum(temp_prod * self.n * np.exp(self.h * self.theta[1, v.index] +
+                                                                   self.h_ * self.theta[0, v.index]))
+
+    def update_ze(self):
+        for e in self.G.es:
+            e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
+            if e['direct'] == 3:
+                self.Z_e[e.index] = e['msg'].dot(self.p * self.p.T).dot(e_['msg'])
+                self.Z_e[e.index] *= (self.theta[0, e.source] * self.theta[1, e.target] *
+                                      self.theta[0, e.target] * self.theta[1, e.source])
+            elif 1.5 + np.sign(e.source - e.target) / 2.0 == e['direct']:  # if there was same direction edge
+                self.Z_e[e.index] = e['msg'].dot(self.p).dot(e_['msg'])
+                self.Z_e[e.index] *= self.theta[0, e.source] * self.theta[1, e.target]
+
+    def get_new_parameters(self):
+        new_n = self.get_marginals().sum(0) / self.N  # eq. 34 [undir]
+        new_n_out = self.theta[0, :].dot(self.get_marginals()) / self.N
+        new_n_in = self.theta[1, :].dot(self.get_marginals()) / self.N
+        new_p = 0.0
+        self.update_ze()  # you may comment this line if you are sure that Z_e is actual
+        for e in self.G.es:
+            e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
+            if e['direct'] == 3:
+                new_p += (self.p * self.p.T * np.dot(e['msg'][:, None], e_['msg'][None, :]) *
+                          self.theta[0, e.source] * self.theta[1, e.target] *
+                          self.theta[0, e.target] * self.theta[1, e.source]) / self.Z_e[e.index]
+            elif 1.5 + np.sign(e.source - e.target) / 2.0 == e['direct']:  # if there was same direction edge
+                new_p += (self.p * np.dot(e['msg'][:, None], e_['msg'][None, :]) *
+                          self.theta[0, e.source] * self.theta[1, e.target]) / self.Z_e[e.index]
+        new_p /= np.dot(new_n_out[:, None], new_n_in[None, :]) * self.N * self.N
+        return new_n, new_p
+
+
 class PoissonMessages(Messages):
     def __init__(self, q, n, p, g):
         super(PoissonMessages, self).__init__(q, n, p, g)
@@ -461,215 +672,4 @@ class DegPoissMessages(PoissonMessages):
                       self.Z_e[e.index] / math.gamma(e['weight']))
         # new_p /= (np.dot(new_n[:, None], new_n[None, :]) * self.N * self.N)
         new_p /= np.dot(new_n_deg[:, None], new_n_deg[None, :])
-        return new_n, new_p
-
-
-class DegMessages(Messages):
-    def __init__(self, q, n, p, g):
-        super(DegMessages, self).__init__(q, n, p, g)
-        self.theta = np.array(g.degree())  # degree correction
-
-    def update_marginal(self, v):
-        e_jk = np.array([self.G.es[self.G.get_eid(x.index, v.index)]['msg'] *
-                         self.theta[x.index] * self.theta[v.index]
-                         for x in self.G.vs[v.index].neighbors('in')])  # connected messages
-        v['mar'] = self.n.copy()
-        if e_jk.size:
-            temp_v = np.log(np.dot(e_jk, self.p)).sum(0) + self.h * self.theta[v.index]
-            if np.isinf(temp_v.max()):  # if all are equal to -inf
-                v['mar'] *= np.exp(self.h * self.theta[v.index])
-            else:
-                temp_v -= temp_v.max()
-                v['mar'] *= np.exp(temp_v)  # eq. 28 [undir]
-        v['mar'] = v['mar'] / np.sum(v['mar'])  # normalization
-
-    def update_field(self):
-        self.h = -np.dot(np.array(self.G.vs['mar']), self.p).T.dot(self.theta) / self.N
-
-    def update_messages(self):
-        conv = 0.0  # conversion
-        for e in self.G.es:
-            # we start with updating the message
-            old_msg = e['msg'].copy()
-            e_jk = np.array([self.G.es[self.G.get_eid(x.index, e.source)]['msg'] *
-                             self.theta[x.index] * self.theta[e.source]
-                             for x in self.G.vs[e.source].neighbors('in')
-                             if x != self.G.vs[e.target]])
-            e['msg'] = self.n.copy()
-            if e_jk.size:
-                temp_e = np.log(np.dot(e_jk, self.p)).sum(0) + self.h * self.theta[e.source]
-                if np.isinf(temp_e.max()):  # if all are equal to -inf
-                    e['msg'] *= np.exp(self.h * self.theta[e.source])
-                else:
-                    temp_e -= temp_e.max()
-                    e['msg'] *= np.exp(temp_e)  # eq. 26
-            e['msg'] = e['msg'] / np.sum(e['msg'])  # normalization
-            conv += np.abs(e['msg'] - old_msg).sum()  # updating convergence
-            # then we need to update the target marginal
-            v = self.G.vs[e.target]
-            old_mar = v['mar'].copy()
-            self.update_marginal(v)
-            # finally we update the auxiliary field
-            self.h += (np.dot(old_mar, self.p) - np.dot(v['mar'], self.p)) * self.theta[v.index] / self.N
-        conv /= self.M
-        return conv
-
-    def update_zv(self):
-        for v in self.G.vs:
-            e_jk = np.array([self.G.es[self.G.get_eid(x.index, v.index)]['msg'] *
-                             self.theta[x.index] * self.theta[v.index]
-                             for x in self.G.vs[v.index].neighbors('in')])  # connected messages
-            temp_prod = np.ones(self.q)
-            if e_jk.size:
-                temp_prod = np.dot(e_jk, self.p).prod(0)
-            self.Z_v[v.index] = np.sum(temp_prod * self.n * np.exp(self.h * self.theta[v.index]))
-
-    def update_ze(self):
-        for e in self.G.es:
-            e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
-            self.Z_e[e.index] = e['msg'].dot(self.p).dot(e_['msg']) * self.theta[e.source] * self.theta[e.target]
-
-    def get_new_parameters(self):
-        new_n = self.get_marginals().sum(0) / self.N  # eq. 34 [undir]
-        new_n_deg = self.theta.dot(self.get_marginals()) / self.N
-        new_p = 0.0
-        self.update_ze()  # you may comment this line if you are sure that Z_e is actual
-        for e in self.G.es:
-            e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
-            new_p += (np.dot(e['msg'][:, None], e_['msg'][None, :]) *
-                      self.theta[e.source] * self.theta[e.target]) / self.Z_e[e.index]
-        new_p *= self.p / (np.dot(new_n_deg[:, None], new_n_deg[None, :]) * self.N * self.N)
-        return new_n, new_p
-
-    # def get_new_parameters(self):
-    #     new_n = self.get_marginals().sum(0) / self.N  # eq. 34 [undir]
-    #     new_p = 0.0
-    #     self.update_ze()  # you may comment this line if you are sure that Z_e is actual
-    #     for e in self.G.es:
-    #         e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
-    #         new_p += (np.dot(e['msg'][:, None], e_['msg'][None, :]) *
-    #                   self.theta[e.source] * self.theta[e.target]) / self.Z_e[e.index]
-    #     new_p *= self.p / (np.dot(new_n[:, None], new_n[None, :]) * self.N * self.N)
-    #     return new_n, new_p
-
-
-class DegDirectedMessages(DirectedMessages):
-    def __init__(self, q, n, p, g):
-        self.theta = np.array([g.outdegree(), g.indegree()])  # degree correction
-        self.h_ = np.zeros(q)
-        super(DegDirectedMessages, self).__init__(q, n, p, g)
-
-    def update_marginal(self, v):
-        e_jk = [self.G.es[self.G.get_eid(x.index, v.index)]  # connected messages
-                for x in self.G.vs[v.index].neighbors('in')]
-        temp_v = self.h * self.theta[1, v.index] + self.h_ * self.theta[0, v.index]
-        if e_jk:
-            for m in e_jk:
-                if m['direct'] == 3:  # if there was an edge in both direction
-                    temp_v += np.log(np.dot(m['msg'], self.p * self.p.T))
-                    temp_v += np.log(self.theta[0, m.source] * self.theta[1, m.target] *
-                                     self.theta[0, m.target] * self.theta[1, m.source])
-                elif 1.5 + np.sign(m.source - m.target) / 2.0 == m['direct']:  # if there was same direction edge
-                    temp_v += np.log(np.dot(m['msg'], self.p))
-                    temp_v += np.log(self.theta[0, m.source] * self.theta[1, m.target])
-                else:
-                    temp_v += np.log(np.dot(m['msg'], self.p.T))
-                    temp_v += np.log(self.theta[0, m.target] * self.theta[1, m.source])
-        if np.isinf(temp_v.max()):  # if all are equal to -inf
-            temp_v = np.zeros(self.q)
-        else:
-            temp_v -= temp_v.max()
-        v['mar'] = np.exp(temp_v) * self.n
-        v['mar'] = v['mar'] / np.sum(v['mar'])  # normalization
-
-    def update_field(self):
-        self.h = -np.dot(np.array(self.G.vs['mar']), self.p).T.dot(self.theta[0, :]) / self.N
-        self.h_ = -np.dot(np.array(self.G.vs['mar']), self.p.T).T.dot(self.theta[1, :]) / self.N
-
-    def update_messages(self):
-        conv = 0.0  # conversion
-        conv_denominator = np.array(self.G.es['msg']).sum()
-        for e in self.G.es:
-            # we start with updating the message
-            old_msg = e['msg'].copy()
-            e_jk = [self.G.es[self.G.get_eid(x.index, e.source)]
-                    for x in self.G.vs[e.source].neighbors('in')
-                    if x != self.G.vs[e.target]]
-            temp_e = (self.h * self.theta[1, e.source] + self.h_ * self.theta[0, e.source])
-            if e_jk:
-                for m in e_jk:
-                    if m['direct'] == 3:  # if there was an edge in both direction
-                        temp_e += np.log(np.dot(m['msg'], self.p * self.p.T))
-                        temp_e += np.log(self.theta[0, m.source] * self.theta[1, m.target] *
-                                         self.theta[0, m.target] * self.theta[1, m.source])
-                    elif 1.5 + np.sign(m.source - m.target) / 2.0 == m['direct']:  # if there was same direction edge
-                        temp_e += np.log(np.dot(m['msg'], self.p))
-                        temp_e += np.log(self.theta[0, m.source] * self.theta[1, m.target])
-                    else:
-                        temp_e += np.log(np.dot(m['msg'], self.p.T))
-                        temp_e += np.log(self.theta[0, m.target] * self.theta[1, m.source])
-            if np.isinf(temp_e.max()):  # if all are equal to -inf
-                temp_e = np.zeros(self.q)  # zeros because it is a logarithm
-            else:
-                temp_e -= temp_e.max()
-            e['msg'] = np.exp(temp_e) * self.n
-            e['msg'] = e['msg'] / np.sum(e['msg'])  # normalization
-            conv += np.abs(e['msg'] - old_msg).sum()  # updating convergence
-            # then we need to update the target marginal
-            v = self.G.vs[e.target]
-            old_mar = v['mar'].copy()
-            self.update_marginal(v)
-            # finally we update the auxiliary field
-            self.h += (np.dot(old_mar, self.p) - np.dot(v['mar'], self.p)) * self.theta[0, v.index] / self.N
-            self.h_ += (np.dot(old_mar, self.p.T) - np.dot(v['mar'], self.p.T)) * self.theta[1, v.index] / self.N
-        conv /= conv_denominator
-        return conv
-
-    def update_zv(self):  # TODO: tu trzeba dodac jakies logarytmy, poniewaz to sie wykrzaczy dla duzych stopni
-        for v in self.G.vs:
-            e_jk = [self.G.es[self.G.get_eid(x.index, v.index)]  # connected messages
-                    for x in self.G.vs[v.index].neighbors('in')]
-            temp_prod = np.ones(self.q)
-            if e_jk:
-                for m in e_jk:
-                    if m['direct'] == 3:  # if there was an edge in both direction
-                        temp_prod *= np.dot(m['msg'], self.p * self.p.T)
-                        temp_prod *= (self.theta[0, m.source] * self.theta[1, m.target] *
-                                      self.theta[0, m.target] * self.theta[1, m.source])
-                    elif 1.5 + np.sign(m.source - m.target) / 2.0 == m['direct']:  # if there was same direction edge
-                        temp_prod *= np.dot(m['msg'], self.p)
-                        temp_prod *= self.theta[0, m.source] * self.theta[1, m.target]
-                    else:
-                        temp_prod *= np.dot(m['msg'], self.p.T)
-                        temp_prod *= self.theta[0, m.target] * self.theta[1, m.source]
-            self.Z_v[v.index] = np.sum(temp_prod * self.n * np.exp(self.h * self.theta[1, v.index] +
-                                                                   self.h_ * self.theta[0, v.index]))
-
-    def update_ze(self):
-        for e in self.G.es:
-            e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
-            if e['direct'] == 3:
-                self.Z_e[e.index] = e['msg'].dot(self.p * self.p.T).dot(e_['msg'])
-                self.Z_e[e.index] *= (self.theta[0, e.source] * self.theta[1, e.target] *
-                                      self.theta[0, e.target] * self.theta[1, e.source])
-            elif 1.5 + np.sign(e.source - e.target) / 2.0 == e['direct']:  # if there was same direction edge
-                self.Z_e[e.index] = e['msg'].dot(self.p).dot(e_['msg'])
-                self.Z_e[e.index] *= self.theta[0, e.source] * self.theta[1, e.target]
-
-    def get_new_parameters(self):
-        new_n = self.get_marginals().sum(0) / self.N  # eq. 34 [undir]
-        new_n_out = self.theta[0, :].dot(self.get_marginals()) / self.N
-        new_n_in = self.theta[1, :].dot(self.get_marginals()) / self.N
-        new_p = 0.0
-        self.update_ze()  # you may comment this line if you are sure that Z_e is actual
-        for e in self.G.es:
-            e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
-            if e['direct'] == 3:
-                new_p += (self.p * self.p.T * np.dot(e['msg'][:, None], e_['msg'][None, :]) *
-                          self.theta[0, e.source] * self.theta[1, e.target] *
-                          self.theta[0, e.target] * self.theta[1, e.source]) / self.Z_e[e.index]
-            elif 1.5 + np.sign(e.source - e.target) / 2.0 == e['direct']:  # if there was same direction edge
-                new_p += (self.p * np.dot(e['msg'][:, None], e_['msg'][None, :]) *
-                          self.theta[0, e.source] * self.theta[1, e.target]) / self.Z_e[e.index]
-        new_p /= np.dot(new_n_out[:, None], new_n_in[None, :]) * self.N * self.N
         return new_n, new_p
