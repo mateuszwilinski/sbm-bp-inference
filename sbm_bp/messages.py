@@ -305,17 +305,6 @@ class DegMessages(Messages):
         new_p *= self.p / (np.dot(new_n_deg[:, None], new_n_deg[None, :]) * self.N * self.N)
         return new_n, new_p
 
-    # def get_new_parameters(self):
-    #     new_n = self.get_marginals().sum(0) / self.N  # eq. 34 [undir]
-    #     new_p = 0.0
-    #     self.update_ze()  # you may comment this line if you are sure that Z_e is actual
-    #     for e in self.G.es:
-    #         e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
-    #         new_p += (np.dot(e['msg'][:, None], e_['msg'][None, :]) *
-    #                   self.theta[e.source] * self.theta[e.target]) / self.Z_e[e.index]
-    #     new_p *= self.p / (np.dot(new_n[:, None], new_n[None, :]) * self.N * self.N)
-    #     return new_n, new_p
-
 
 class DegDirectedMessages(DirectedMessages):
     def __init__(self, q, n, p, g):
