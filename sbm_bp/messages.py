@@ -209,9 +209,7 @@ class DirectedMessages(Messages):
     def update_ze(self):
         for e in self.G.es:
             e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
-            if e['direct'] == 3:
-                self.Z_e[e.index] = e['msg'].dot(self.p * self.p.T).dot(e_['msg'])
-            elif 1.5 + np.sign(e.source - e.target) / 2.0 == e['direct']:  # if there was same direction edge
+            if (e['direct'] == 3) or (1.5 + np.sign(e.source - e.target) / 2.0 == e['direct']):
                 self.Z_e[e.index] = e['msg'].dot(self.p).dot(e_['msg'])
 
     def get_new_parameters(self):
@@ -220,9 +218,7 @@ class DirectedMessages(Messages):
         self.update_ze()  # you may comment this line if you are sure that Z_e is actual
         for e in self.G.es:
             e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
-            if e['direct'] == 3:
-                new_p += self.p * self.p.T * np.dot(e['msg'][:, None], e_['msg'][None, :]) / self.Z_e[e.index]
-            elif 1.5 + np.sign(e.source - e.target) / 2.0 == e['direct']:  # if there was same direction edge
+            if (e['direct'] == 3) or (1.5 + np.sign(e.source - e.target) / 2.0 == e['direct']):
                 new_p += self.p * np.dot(e['msg'][:, None], e_['msg'][None, :]) / self.Z_e[e.index]
         new_p /= np.dot(new_n[:, None], new_n[None, :]) * self.N * self.N
         return new_n, new_p
@@ -401,11 +397,7 @@ class DegDirectedMessages(DirectedMessages):
     def update_ze(self):
         for e in self.G.es:
             e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
-            if e['direct'] == 3:
-                self.Z_e[e.index] = e['msg'].dot(self.p * self.p.T).dot(e_['msg'])
-                self.Z_e[e.index] *= (self.theta[0, e.source] * self.theta[1, e.target] *
-                                      self.theta[0, e.target] * self.theta[1, e.source])
-            elif 1.5 + np.sign(e.source - e.target) / 2.0 == e['direct']:  # if there was same direction edge
+            if (e['direct'] == 3) or (1.5 + np.sign(e.source - e.target) / 2.0 == e['direct']):
                 self.Z_e[e.index] = e['msg'].dot(self.p).dot(e_['msg'])
                 self.Z_e[e.index] *= self.theta[0, e.source] * self.theta[1, e.target]
 
@@ -417,11 +409,7 @@ class DegDirectedMessages(DirectedMessages):
         self.update_ze()  # you may comment this line if you are sure that Z_e is actual
         for e in self.G.es:
             e_ = self.G.es[self.G.get_eid(e.target, e.source)]  # the opposite message
-            if e['direct'] == 3:
-                new_p += (self.p * self.p.T * np.dot(e['msg'][:, None], e_['msg'][None, :]) *
-                          self.theta[0, e.source] * self.theta[1, e.target] *
-                          self.theta[0, e.target] * self.theta[1, e.source]) / self.Z_e[e.index]
-            elif 1.5 + np.sign(e.source - e.target) / 2.0 == e['direct']:  # if there was same direction edge
+            if (e['direct'] == 3) or (1.5 + np.sign(e.source - e.target) / 2.0 == e['direct']):
                 new_p += (self.p * np.dot(e['msg'][:, None], e_['msg'][None, :]) *
                           self.theta[0, e.source] * self.theta[1, e.target]) / self.Z_e[e.index]
         new_p /= np.dot(new_n_out[:, None], new_n_in[None, :]) * self.N * self.N

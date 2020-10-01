@@ -57,7 +57,7 @@ while conv_1 > crit_1:
     temp_n = n_.copy()
     temp_p = p_.copy()
     n_, p_ = msg.get_new_parameters()
-    conv_1 = (np.abs(n_ - temp_n).sum() + N * np.abs(p_ - temp_p).sum()) / (temp_n.sum() + temp_p.sum())
+    conv_1 = (np.abs(n_ - temp_n).sum() + N * np.abs(p_ - temp_p).sum()) / (temp_n.sum() + N * temp_p.sum())
     print(conv_1)
 
 overlap = get_real_overlap(msg.get_marginals(), G, n)  # real overlap
