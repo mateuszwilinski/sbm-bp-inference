@@ -1,3 +1,16 @@
-# PyCharm files #
-#################
-.idea
+/data/
+/bash/
+/emid/
+/empirical/
+/pickles/
+/results/
+/us-airports/
+/validated/
+/notebooks/
+/experiments/
+/.idea/
+/.ipynb_checkpoints/
+/__pycache__/
+.DS_Store
+*.ipynb
+*.pyc
